@@ -13,26 +13,54 @@
 #include <signal.h>
 #include <time.h>
 #include <pthread.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #include "common.h"
 #include "vector.h"
 
 #define POSITION_REFRESH_TIME 1500000000
+#define LOGS_DIRECTORY "logs"
+#define LOG_FILE_PREFIX "log_"
+
+typedef struct vehicle {
+	int id;
+	int log_fd;
+	struct sockaddr_in addr;
+	pthread_mutex_t log_mutex;
+} vehicle;
 
 volatile sig_atomic_t last_signal=0;
 
 static pthread_mutex_t vehicles_mutex =  PTHREAD_MUTEX_INITIALIZER;
 
-typedef struct vehicle {
-	int id;
-	struct sockaddr_in addr;
-
-} vehicle;
 
 vector registered_vehicles;
 
+void cleanup() {
+	int vehicles_count = vector_length(&registered_vehicles);
+	vehicle current_vehicle;
+	int i = 0;
+	for (;i<vehicles_count;i++){
+		vector_get(&registered_vehicles,i,&current_vehicle);
+		fprintf(stderr, "Zamykam plik: %d\n", current_vehicle.log_fd);
+		if(TEMP_FAILURE_RETRY(close(current_vehicle.log_fd))<0)ERR("close");
+		if(TEMP_FAILURE_RETRY(pthread_mutex_destroy(&current_vehicle.log_mutex))<0)ERR("close");
+	}
+
+	vector_dispose(&registered_vehicles);
+}
+
 void sig_alrm(int i) {
 	last_signal=i;
+}
+
+void sig_int(int signo) {
+	last_signal = signo;
+	fprintf(stderr,"\nSIGINT - sprzatam...\n");
+	cleanup();
+	exit(EXIT_SUCCESS);
 }
 
 int bind_socket(int port){
@@ -112,6 +140,17 @@ void register_new_vehicle(int sfd, struct sockaddr_in* client_addr, char* vehicl
 	vehicle new_vehicle;
 	new_vehicle.addr = make_address2(vehicle_address);
 	new_vehicle.id = assigned_id;
+
+	//Plik logu
+	char logname[20];
+	snprintf(logname,20,"%s/%s%d",LOGS_DIRECTORY,LOG_FILE_PREFIX,new_vehicle.id);
+	fprintf(stderr,"Tworze plik: %s\n",logname);
+	int fd;
+	if ((fd = open (logname, O_RDWR | O_CREAT | O_TRUNC | O_APPEND, S_IRWXU | S_IRWXG | S_IRWXO) )< 0)ERR("Create file");
+	new_vehicle.log_fd = fd;
+
+
+	pthread_mutex_init(&new_vehicle.log_mutex, NULL);
 
 	vector_push(&registered_vehicles,&new_vehicle);
 
@@ -193,6 +232,12 @@ void process_vehicle_position(struct message *in_msg) {
 
 	fprintf(stderr,"[%d] Pozycja: %s\n",current_vehicle.id, in_msg->text);
 
+	char buffer[20];
+	snprintf(buffer,20,"%s\n",in_msg->text);
+
+	if (pthread_mutex_lock(&current_vehicle.log_mutex)!=0) ERR("mutex_lock");
+	bulk_write(current_vehicle.log_fd, buffer, strlen(buffer));
+	if (pthread_mutex_unlock(&current_vehicle.log_mutex)!=0) ERR("mutex_unlock");
 }
 
 void work(int sfd) {
@@ -239,12 +284,20 @@ int main(int argc, char** argv) {
 	}
 	srand(time(NULL));
 	if(sethandler(sig_alrm,SIGALRM)) ERR("Seting SIGALRM:");
+	if(sethandler(sig_int,SIGINT)) ERR("Seting SIGINT:");
 
 	sfd=bind_socket(atoi(argv[1]));
+
+	int mkdir_result;
+	if ((mkdir_result = mkdir(LOGS_DIRECTORY, 0777)) < 0) {
+		if (mkdir_result!=-1)
+			fprintf(stderr, "Error:%d",mkdir_result);
+	}
 	//work(sock, task_length,points_to_win);
 
 	work(sfd);
 
+	cleanup();
 	if(TEMP_FAILURE_RETRY(close(sfd))<0)ERR("close");
 	return EXIT_SUCCESS;
 }

@@ -41,6 +41,7 @@ int send_datagram(int sock,struct sockaddr_in *addr, char type,char *text);
 struct message* recv_datagram(int sock);
 struct message* create_message(char type, char *text, struct sockaddr_in *addr) ;
 void destroy_message(struct message* msg);
-
+ssize_t bulk_read(int fd, char *buf, size_t count);
+ssize_t bulk_write(int fd, char *buf, size_t count);
 
 #endif
