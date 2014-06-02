@@ -21,6 +21,7 @@
 #include "vector.h"
 
 #define POSITION_REFRESH_TIME 1500000000
+#define FILE_SEGMENT_SIZE 30
 #define LOGS_DIRECTORY "logs"
 #define LOG_FILE_PREFIX "log_"
 
@@ -235,10 +236,42 @@ void process_vehicle_position(struct message *in_msg) {
 	char buffer[20];
 	snprintf(buffer,20,"%s\n",in_msg->text);
 
+
 	if (pthread_mutex_lock(&current_vehicle.log_mutex)!=0) ERR("mutex_lock");
 	bulk_write(current_vehicle.log_fd, buffer, strlen(buffer));
 	if (pthread_mutex_unlock(&current_vehicle.log_mutex)!=0) ERR("mutex_unlock");
 }
+
+void send_vehicle_history(int sfd, struct message *in_msg) {
+	vehicle current_vehicle;
+	int vehicle_id = atoi(in_msg->text);
+	int  vehicle_index = get_vehicle_by_id(vehicle_id);
+	vector_get(&registered_vehicles,vehicle_index,&current_vehicle);
+
+
+
+	char buffer[FILE_SEGMENT_SIZE];
+	send_datagram(sfd, in_msg->addr, VEHICLE_HISTORY_RESPONSE_START_MESSAGE, "Reading");
+	if (pthread_mutex_lock(&current_vehicle.log_mutex)!=0) ERR("mutex_lock");
+	fprintf(stderr,"Pobieram historie pojazdu %d (fd=%d)...\n",current_vehicle.id, current_vehicle.log_fd);
+	if (lseek(current_vehicle.log_fd, 0,SEEK_SET) < 0)ERR("lseek");
+	while (bulk_read(current_vehicle.log_fd, buffer, FILE_SEGMENT_SIZE) > 0){
+		fprintf(stderr,"%s",buffer);
+		send_datagram(sfd, in_msg->addr, VEHICLE_HISTORY_RESPONSE_DATA_MESSAGE, buffer);
+	}
+	if (lseek(current_vehicle.log_fd, SEEK_END,SEEK_SET) < 0)ERR("lseek");
+	send_datagram(sfd, in_msg->addr, VEHICLE_HISTORY_RESPONSE_END_MESSAGE, "Done");
+	fprintf(stderr,"\nWysylanie zakonczone\n");
+
+	if (pthread_mutex_unlock(&current_vehicle.log_mutex)!=0) ERR("mutex_unlock");
+	// char buffer[20];
+	// snprintf(buffer,20,"%s\n",in_msg->text);
+
+	// if (pthread_mutex_lock(&current_vehicle.log_mutex)!=0) ERR("mutex_lock");
+	// bulk_write(current_vehicle.log_fd, buffer, strlen(buffer));
+	// if (pthread_mutex_unlock(&current_vehicle.log_mutex)!=0) ERR("mutex_unlock");
+}
+
 
 void work(int sfd) {
 	struct message *in_msg;
@@ -264,6 +297,9 @@ void work(int sfd) {
 			if (pthread_mutex_lock(&vehicles_mutex)!=0) ERR("mutex_lock");
 			process_vehicle_position(in_msg);
 			if (pthread_mutex_unlock(&vehicles_mutex)!=0) ERR("mutex_unlock");
+		}
+		else if (in_msg->type==VEHICLE_HISTORY_REQUEST_MESSAGE) {
+			send_vehicle_history(sfd,in_msg);
 		}
 		destroy_message(in_msg);
 	}

@@ -89,6 +89,37 @@ void unregister_vehicle(int sfd,struct sockaddr_in *addr) {
 	destroy_message(in_msg);
 }
 
+void get_vehicle_history(int sfd,struct sockaddr_in *addr) {
+	int vehicle_id;
+	char message_text[4];
+
+	struct message *in_msg;
+
+	fprintf(stderr,"Podaj ID pojazdu: ");
+  	scanf ("%d",&vehicle_id);
+	snprintf(message_text,4,"%d",vehicle_id);
+
+	send_datagram(sfd,addr,VEHICLE_HISTORY_REQUEST_MESSAGE,message_text);
+	int receiving_data = 0;
+
+	do {
+		receiving_data = 0;
+		in_msg = recv_datagram(sfd);
+		if (in_msg==NULL) break;
+		if (in_msg->type == VEHICLE_HISTORY_RESPONSE_START_MESSAGE) {
+			fprintf(stderr,"Historia pojazdu: \n");
+			receiving_data = 1;
+			destroy_message(in_msg);
+		}
+		else if (in_msg->type == VEHICLE_HISTORY_RESPONSE_DATA_MESSAGE) {
+			fprintf(stderr,"%s",in_msg->text);
+			receiving_data = 1;
+			destroy_message(in_msg);
+		}
+	}
+	while (receiving_data==1);
+
+}
 void work(int sfd, struct sockaddr_in *addr) {
 	fprintf(stderr,"Klient administracyjny dziala...\n");
 	for (;;){
@@ -99,6 +130,8 @@ void work(int sfd, struct sockaddr_in *addr) {
 			case 2:
 				unregister_vehicle(sfd,addr);
 				break;
+			case 3:
+				get_vehicle_history(sfd,addr);
 		}
 	}
 }
