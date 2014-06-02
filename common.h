@@ -15,11 +15,8 @@
 #define POSITION_RESPONSE_MESSAGE '1'
 #define REGISTER_VEHICLE_REQUEST_MESSAGE '2'
 #define REGISTER_VEHICLE_RESPONSE_MESSAGE '3'
-
-#define REGISTER_MESSAGE '0'
-#define TASK_MESSAGE '1'
-#define RESULT_CONFIRM_MESSAGE '2'
-#define END_MESSAGE '3'
+#define UNREGISTER_VEHICLE_REQUEST_MESSAGE '4'
+#define UNREGISTER_VEHICLE_RESPONSE_MESSAGE '5'
 
 struct message {
       int type;
@@ -44,7 +41,6 @@ int send_datagram(int sock,struct sockaddr_in *addr, char type,char *text);
 struct message* recv_datagram(int sock);
 struct message* create_message(char type, char *text, struct sockaddr_in *addr) ;
 void destroy_message(struct message* msg);
-int solve_task(char *task) ;
 
 
 #endif

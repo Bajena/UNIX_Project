@@ -33,7 +33,7 @@ void usage(char * name){
 int choose_option() {
 	int selected_option = -1;
 	do {
-		fprintf(stderr, "WYBIERZ FUNKCJE:\n1 - Zarejestruj pojazd\n2 - Wyrejestruj pojazd\n3- Pobierz historie pojazdu\n4 - Oblicz ktory pojazd przejechal najdluzsza trase\n5 - Sprawdz status obliczen\n");
+		fprintf(stderr, "WYBIERZ FUNKCJE:\n1 - Zarejestruj pojazd\n2 - Wyrejestruj pojazd\n3 - Pobierz historie pojazdu\n4 - Oblicz ktory pojazd przejechal najdluzsza trase\n5 - Sprawdz status obliczen\n");
 		fprintf(stderr,"Twoj wybor: ");
 
   		scanf ("%d",&selected_option);
@@ -63,6 +63,30 @@ void register_vehicle(int sfd, struct sockaddr_in *addr) {
 	if (in_msg->type == REGISTER_VEHICLE_RESPONSE_MESSAGE) {
 		fprintf(stderr,"Zarejestrowano pojazd o id: %s\n",in_msg->text);
 	}
+
+	destroy_message(in_msg);
+}
+
+void unregister_vehicle(int sfd,struct sockaddr_in *addr) {
+	int vehicle_id;
+	char unregister_message_text[4];
+
+	struct message *in_msg;
+
+	fprintf(stderr,"Podaj ID pojazdu: ");
+  	scanf ("%d",&vehicle_id);
+
+	snprintf(unregister_message_text,4,"%d",vehicle_id);
+
+	send_datagram(sfd,addr,UNREGISTER_VEHICLE_REQUEST_MESSAGE,unregister_message_text);
+
+	in_msg = recv_datagram(sfd);
+	if (in_msg==NULL) return;
+	if (in_msg->type == UNREGISTER_VEHICLE_RESPONSE_MESSAGE) {
+		fprintf(stderr,"Odpowiedz serwera: %s\n",in_msg->text);
+	}
+
+	destroy_message(in_msg);
 }
 
 void work(int sfd, struct sockaddr_in *addr) {
@@ -71,6 +95,9 @@ void work(int sfd, struct sockaddr_in *addr) {
 		switch(choose_option()) {
 			case 1:
 				register_vehicle(sfd,addr);
+				break;
+			case 2:
+				unregister_vehicle(sfd,addr);
 				break;
 		}
 	}

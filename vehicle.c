@@ -61,15 +61,23 @@ void process_requests(int sfd){
 		if (in_msg->type == POSITION_REQUEST_MESSAGE) {
 			send_current_position(sfd,in_msg->addr);
 		}
+		destroy_message(in_msg);
 	}
 }
 
 void* generate_path(void *arg)
 {
 	for(;;){
-		current_position.x+=rand()%MAX_MOVE_GPS - MAX_MOVE_GPS;
-		current_position.y+=rand()%MAX_MOVE_GPS - MAX_MOVE_GPS;
-	    	fprintf(stderr,"Pozycja: (%d,%d)\n",current_position.x,current_position.y);
+		int dx = rand()%MAX_MOVE_GPS;
+		int dy = rand()%MAX_MOVE_GPS;
+
+		dx = rand()%2 == 0 ? -dx : dx;
+		dy = rand()%2 == 0 ? -dy : dy;
+
+		current_position.x+=dx;
+		current_position.y+=dy;
+
+	    	fprintf(stderr,"Pozycja: (%d,%d)\nPrzesuniecie: (%d,%d)\n",current_position.x,current_position.y,dx,dy);
 	    	sleep_nanoseconds(POSITION_CHANGE_TIME);
 	}
 

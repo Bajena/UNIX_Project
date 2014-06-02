@@ -17,9 +17,11 @@
 #include "common.h"
 #include "vector.h"
 
-#define POSITION_REFRESH_TIME
+#define POSITION_REFRESH_TIME 1500000000
 
 volatile sig_atomic_t last_signal=0;
+
+static pthread_mutex_t vehicles_mutex =  PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct vehicle {
 	int id;
@@ -97,6 +99,7 @@ struct sockaddr_in make_address2(char *fulladdress){
 
 
 void register_new_vehicle(int sfd, struct sockaddr_in* client_addr, char* vehicle_address) {
+
 	int vehicles_count = vector_length(&registered_vehicles);
 	int assigned_id = 1;
 
@@ -119,6 +122,49 @@ void register_new_vehicle(int sfd, struct sockaddr_in* client_addr, char* vehicl
 	send_datagram(sfd, client_addr, REGISTER_VEHICLE_RESPONSE_MESSAGE, id_string);
 }
 
+// Zwraca index w tablicy registered_vehicles na podstawie id
+// Jeśli nie ma pojazdu o podanym id zwraca -1
+int get_vehicle_by_id(int id) {
+	vehicle current_vehicle;
+	int i;
+	int vehicles_count = vector_length(&registered_vehicles);
+	for (i= 0;i<vehicles_count;i++) {
+		vector_get(&registered_vehicles,i,&current_vehicle);
+		if (current_vehicle.id==id)
+			return i;
+	}
+	return -1;
+}
+
+// Zwraca index w tablicy registered_vehicles na podstawie adresu
+// Jeśli nie ma pojazdu o podanym adresie zwraca -1
+int get_vehicle_by_addr(struct sockaddr_in *addr) {
+	vehicle current_vehicle;
+	int i;
+	int vehicles_count = vector_length(&registered_vehicles);
+	for (i= 0;i<vehicles_count;i++) {
+		vector_get(&registered_vehicles,i,&current_vehicle);
+		if (current_vehicle.addr.sin_port==addr->sin_port &&  strcmp(inet_ntoa(current_vehicle.addr.sin_addr),inet_ntoa(addr->sin_addr))==0)
+			return i;
+	}
+	return -1;
+}
+
+
+void unregister_vehicle(int sfd, struct message *in_msg) {
+	int vehicle_index;
+	int id_to_deregister = atoi(in_msg->text);
+
+	if ((vehicle_index=get_vehicle_by_id(id_to_deregister))==-1) {
+		send_datagram(sfd, in_msg->addr, UNREGISTER_VEHICLE_RESPONSE_MESSAGE, "Brak pojazdu o podanym id");
+	}
+	else {
+		fprintf(stderr,"Odebrano zadanie wyrejestrowania pojazdu\nID: %d , index w tablicy: %d\n",id_to_deregister,vehicle_index);
+		vector_remove(&registered_vehicles, vehicle_index);
+		send_datagram(sfd, in_msg->addr, UNREGISTER_VEHICLE_RESPONSE_MESSAGE, "Wyrejestrowano pojazd o podanym id");
+	}
+}
+
 void *request_vehicles_positions(void *sfd_void) {
 	int sfd = *((int*)sfd_void);
 	vehicle current_vehicle;
@@ -126,15 +172,27 @@ void *request_vehicles_positions(void *sfd_void) {
 	int i;
 
 	for (;;) {
+		if (pthread_mutex_lock(&vehicles_mutex)!=0) ERR("mutex_lock");
 		vehicles_count = vector_length(&registered_vehicles);
 		for (i= 0;i<vehicles_count;i++) {
 			vector_get(&registered_vehicles,i,&current_vehicle);
 			send_datagram(sfd, &current_vehicle.addr, POSITION_REQUEST_MESSAGE, " ");
 		}
 
-		sleep_nanoseconds(1500000000);
+		if (pthread_mutex_unlock(&vehicles_mutex)!=0) ERR("mutex_unlock");
+
+		sleep_nanoseconds(POSITION_REFRESH_TIME);
 	}
 	return NULL;
+}
+
+void process_vehicle_position(struct message *in_msg) {
+	vehicle current_vehicle;
+	int  vehicle_index = get_vehicle_by_addr(in_msg->addr);
+	vector_get(&registered_vehicles,vehicle_index,&current_vehicle);
+
+	fprintf(stderr,"[%d] Pozycja: %s\n",current_vehicle.id, in_msg->text);
+
 }
 
 void work(int sfd) {
@@ -148,11 +206,21 @@ void work(int sfd) {
 		in_msg = recv_datagram(sfd);
 		if (in_msg==NULL) continue;
 		if (in_msg->type == REGISTER_VEHICLE_REQUEST_MESSAGE) {
+			if (pthread_mutex_lock(&vehicles_mutex)!=0) ERR("mutex_lock");
 			register_new_vehicle(sfd,in_msg->addr, in_msg->text);
+			if (pthread_mutex_unlock(&vehicles_mutex)!=0) ERR("mutex_unlock");
+		}
+		else if (in_msg->type == UNREGISTER_VEHICLE_REQUEST_MESSAGE) {
+			if (pthread_mutex_lock(&vehicles_mutex)!=0) ERR("mutex_lock");
+			unregister_vehicle(sfd, in_msg);
+			if (pthread_mutex_unlock(&vehicles_mutex)!=0) ERR("mutex_unlock");
 		}
 		else if (in_msg->type == POSITION_RESPONSE_MESSAGE) {
-			fprintf(stderr,"Pozycja: %s\n",in_msg->text);
+			if (pthread_mutex_lock(&vehicles_mutex)!=0) ERR("mutex_lock");
+			process_vehicle_position(in_msg);
+			if (pthread_mutex_unlock(&vehicles_mutex)!=0) ERR("mutex_unlock");
 		}
+		destroy_message(in_msg);
 	}
 
  	if(pthread_join(positions_thread, NULL)) {

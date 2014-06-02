@@ -140,7 +140,7 @@ extern void vector_get_all(vector *v, void *elems)
 
 extern void vector_remove(vector *v, size_t index)
 {
-	assert((int) index > 0);
+	//assert((int) index > 0);
 
 	if (!VECTOR_INBOUNDS(index))
 		return;

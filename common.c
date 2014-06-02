@@ -98,13 +98,3 @@ void destroy_message(struct message* msg) {
 		free(msg);
 	}
 }
-
-int solve_task(char *task) {
-	int i;
-	int sum = 0;
-	for (i = 0;i<strlen(task);i++) {
-		sum += (int)(task[i] - '0');
-	}
-
-	return sum;
-}
