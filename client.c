@@ -117,8 +117,21 @@ void get_vehicle_history(int sfd,struct sockaddr_in *addr) {
 		destroy_message(in_msg);
 	}
 	while (receiving_data==1);
-
 }
+
+void request_longest_road_calculation(int sfd,struct sockaddr_in *addr) {
+	struct message *in_msg;
+
+	send_datagram(sfd,addr,CALCULATE_LONGEST_ROAD_REQUEST_MESSAGE,"Pliz calculate da shit!");
+
+	in_msg = recv_datagram(sfd);
+	if (in_msg==NULL) return;
+	if (in_msg->type == CALCULATE_LONGEST_ROAD_RESPONSE_MESSAGE) {
+		fprintf(stderr,"Odpowiedz serwera: %s\n",in_msg->text);
+	}
+	destroy_message(in_msg);
+}
+
 void work(int sfd, struct sockaddr_in *addr) {
 	fprintf(stderr,"Klient administracyjny dziala...\n");
 	for (;;){
@@ -131,6 +144,10 @@ void work(int sfd, struct sockaddr_in *addr) {
 				break;
 			case 3:
 				get_vehicle_history(sfd,addr);
+				break;
+			case 4:
+				request_longest_road_calculation(sfd,addr);
+				break;
 		}
 	}
 }

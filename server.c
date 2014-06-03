@@ -20,8 +20,9 @@
 #include "common.h"
 #include "vector.h"
 
-#define POSITION_REFRESH_TIME 2500000000
+#define POSITION_REFRESH_TIME 1500000000
 #define FILE_SEGMENT_SIZE BUFFER_SIZE/2
+#define LINE_BUFFER_SIZE 25
 #define LOGS_DIRECTORY "logs"
 #define LOG_FILE_PREFIX "log_"
 
@@ -32,10 +33,14 @@ typedef struct vehicle {
 	pthread_mutex_t log_mutex;
 } vehicle;
 
+typedef struct calculations_status {
+	int in_progess;
+	double result;
+} calculations_status;
+
 volatile sig_atomic_t last_signal=0;
 
 static pthread_mutex_t vehicles_mutex =  PTHREAD_MUTEX_INITIALIZER;
-
 
 vector registered_vehicles;
 
@@ -268,14 +273,42 @@ void send_vehicle_history(int sfd, struct message *in_msg) {
 	send_datagram(sfd, in_msg->addr, VEHICLE_HISTORY_RESPONSE_END_MESSAGE, "Done");
 	fprintf(stderr,"\nWysylanie zakonczone\n");
 	if (pthread_mutex_unlock(&current_vehicle.log_mutex)!=0) ERR("mutex_unlock");
-	// char buffer[20];
-	// snprintf(buffer,20,"%s\n",in_msg->text);
-
-	// if (pthread_mutex_lock(&current_vehicle.log_mutex)!=0) ERR("mutex_lock");
-	// bulk_write(current_vehicle.log_fd, buffer, strlen(buffer));
-	// if (pthread_mutex_unlock(&current_vehicle.log_mutex)!=0) ERR("mutex_unlock");
 }
 
+void calculate_vehicle_road(vehicle vehicle){
+	if (pthread_mutex_lock(&vehicle.log_mutex)!=0) ERR("mutex_lock");
+	char buffer[LINE_BUFFER_SIZE];
+	int read_chars = 0;
+	fprintf(stderr,"Pojazd: %d\n",vehicle.id);
+	if (lseek(vehicle.log_fd, 0,SEEK_SET) < 0)ERR("lseek");
+	while ((read_chars = bulk_read_line(vehicle.log_fd,buffer,LINE_BUFFER_SIZE)) > 0) {
+		buffer[read_chars] = '\0';
+		fprintf(stderr, "Line: %s\n",buffer);
+	}
+	if (lseek(vehicle.log_fd, SEEK_END,SEEK_SET) < 0)ERR("lseek");
+	if (pthread_mutex_unlock(&vehicle.log_mutex)!=0) ERR("mutex_unlock");
+}
+
+void begin_longest_road_calculations(int sfd, struct message *in_msg) {
+	send_datagram(sfd, in_msg->addr, CALCULATE_LONGEST_ROAD_RESPONSE_MESSAGE, "Rozpoczeto obliczenia...");
+	fprintf(stderr,"Ropoczeto obliczenia najdluzszej drogi...\n");
+
+
+	vector vehicles_clone;
+	vector_init(&vehicles_clone,sizeof(vehicle),0,NULL);
+
+	if (pthread_mutex_lock(&vehicles_mutex)!=0) ERR("mutex_lock");
+	vector_copy(&registered_vehicles,&vehicles_clone);
+	if (pthread_mutex_unlock(&vehicles_mutex)!=0) ERR("mutex_unlock");
+
+	int i;
+	vehicle current_vehicle;
+	int vehicles_count = vector_length(&vehicles_clone);
+	for (i= 0;i<vehicles_count;i++) {
+		vector_get(&vehicles_clone,i,&current_vehicle);
+		calculate_vehicle_road(current_vehicle);
+	}
+}
 
 void work(int sfd) {
 	struct message *in_msg;
@@ -304,6 +337,9 @@ void work(int sfd) {
 		}
 		else if (in_msg->type==VEHICLE_HISTORY_REQUEST_MESSAGE) {
 			send_vehicle_history(sfd,in_msg);
+		}
+		else if (in_msg->type==CALCULATE_LONGEST_ROAD_REQUEST_MESSAGE) {
+			begin_longest_road_calculations(sfd,in_msg);
 		}
 		destroy_message(in_msg);
 	}

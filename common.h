@@ -21,6 +21,8 @@
 #define VEHICLE_HISTORY_RESPONSE_START_MESSAGE '7'
 #define VEHICLE_HISTORY_RESPONSE_DATA_MESSAGE '8'
 #define VEHICLE_HISTORY_RESPONSE_END_MESSAGE '9'
+#define CALCULATE_LONGEST_ROAD_REQUEST_MESSAGE 'A'
+#define CALCULATE_LONGEST_ROAD_RESPONSE_MESSAGE 'B'
 
 struct message {
       int type;
@@ -46,6 +48,7 @@ struct message* recv_datagram(int sock);
 struct message* create_message(char type, char *text, struct sockaddr_in *addr) ;
 void destroy_message(struct message* msg);
 ssize_t bulk_read(int fd, char *buf, size_t count);
+ssize_t bulk_read_line(int fd, char *buf, size_t count);
 ssize_t bulk_write(int fd, char *buf, size_t count);
 
 #endif
