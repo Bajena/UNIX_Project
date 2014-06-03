@@ -80,7 +80,7 @@ struct message* create_message(char type, char *text, struct sockaddr_in *addr) 
 	 struct sockaddr_in *addr_clone;
 	 msg =  (struct message*)mymalloc(sizeof(struct message));
 	 msg->type = type;
-	 msg->text =  (char*)mymalloc(strlen(text));
+	 msg->text =  (char*)mymalloc(strlen(text)+1);
 	 strcpy(msg->text,text);
 
 	 if (addr!=NULL){

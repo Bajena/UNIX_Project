@@ -20,8 +20,8 @@
 #include "common.h"
 #include "vector.h"
 
-#define POSITION_REFRESH_TIME 1500000000
-#define FILE_SEGMENT_SIZE 30
+#define POSITION_REFRESH_TIME 2500000000
+#define FILE_SEGMENT_SIZE BUFFER_SIZE/2
 #define LOGS_DIRECTORY "logs"
 #define LOG_FILE_PREFIX "log_"
 
@@ -125,7 +125,6 @@ struct sockaddr_in make_address2(char *fulladdress){
 	fprintf(stderr, "FullAdrres: %s\nIP: %s\nPort: %d\n", fulladdress,ipaddress,port);
 	return make_address(ipaddress,port);
 }
-
 
 void register_new_vehicle(int sfd, struct sockaddr_in* client_addr, char* vehicle_address) {
 
@@ -246,23 +245,28 @@ void send_vehicle_history(int sfd, struct message *in_msg) {
 	vehicle current_vehicle;
 	int vehicle_id = atoi(in_msg->text);
 	int  vehicle_index = get_vehicle_by_id(vehicle_id);
+
+	if (vehicle_index==-1){
+		send_datagram(sfd, in_msg->addr, VEHICLE_HISTORY_RESPONSE_END_MESSAGE, "Brak pojazdu o podanym id");
+		return;
+	}
+
 	vector_get(&registered_vehicles,vehicle_index,&current_vehicle);
-
-
 
 	char buffer[FILE_SEGMENT_SIZE];
 	send_datagram(sfd, in_msg->addr, VEHICLE_HISTORY_RESPONSE_START_MESSAGE, "Reading");
 	if (pthread_mutex_lock(&current_vehicle.log_mutex)!=0) ERR("mutex_lock");
 	fprintf(stderr,"Pobieram historie pojazdu %d (fd=%d)...\n",current_vehicle.id, current_vehicle.log_fd);
 	if (lseek(current_vehicle.log_fd, 0,SEEK_SET) < 0)ERR("lseek");
-	while (bulk_read(current_vehicle.log_fd, buffer, FILE_SEGMENT_SIZE) > 0){
+	int read_chars = 0;
+	while ((read_chars = bulk_read(current_vehicle.log_fd, buffer, FILE_SEGMENT_SIZE)) > 0){
+		buffer[read_chars] = '\0';
 		fprintf(stderr,"%s",buffer);
 		send_datagram(sfd, in_msg->addr, VEHICLE_HISTORY_RESPONSE_DATA_MESSAGE, buffer);
 	}
 	if (lseek(current_vehicle.log_fd, SEEK_END,SEEK_SET) < 0)ERR("lseek");
 	send_datagram(sfd, in_msg->addr, VEHICLE_HISTORY_RESPONSE_END_MESSAGE, "Done");
 	fprintf(stderr,"\nWysylanie zakonczone\n");
-
 	if (pthread_mutex_unlock(&current_vehicle.log_mutex)!=0) ERR("mutex_unlock");
 	// char buffer[20];
 	// snprintf(buffer,20,"%s\n",in_msg->text);

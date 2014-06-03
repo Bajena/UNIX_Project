@@ -109,13 +109,12 @@ void get_vehicle_history(int sfd,struct sockaddr_in *addr) {
 		if (in_msg->type == VEHICLE_HISTORY_RESPONSE_START_MESSAGE) {
 			fprintf(stderr,"Historia pojazdu: \n");
 			receiving_data = 1;
-			destroy_message(in_msg);
 		}
 		else if (in_msg->type == VEHICLE_HISTORY_RESPONSE_DATA_MESSAGE) {
 			fprintf(stderr,"%s",in_msg->text);
 			receiving_data = 1;
-			destroy_message(in_msg);
 		}
+		destroy_message(in_msg);
 	}
 	while (receiving_data==1);
 

@@ -123,8 +123,6 @@ static void vector_grow(vector *v, size_t size)
 
 extern void vector_get(vector *v, size_t index, void *elem)
 {
-	assert((int) index >= 0);
-
 	if (!VECTOR_INBOUNDS(index)) {
 		elem = NULL;
 		return;
