@@ -15,6 +15,13 @@
 #include "common.h"
 
 
+volatile sig_atomic_t last_signal=0;
+
+
+void sig_alrm(int i) {
+	last_signal=i;
+}
+
 struct sockaddr_in make_address(char *address, int port){
 	struct sockaddr_in addr;
 	struct hostent *hostinfo;
@@ -24,6 +31,20 @@ struct sockaddr_in make_address(char *address, int port){
 	if(hostinfo == NULL)ERR("gethost:");
 	addr.sin_addr = *(struct in_addr*) hostinfo->h_addr;
 	return addr;
+}
+
+
+struct message* timed_recv(int sock) {
+	struct message* in_msg;
+	set_alarm(0,CONFIRM_TIME);
+	if (((in_msg=recv_datagram(sock))==NULL) && errno==EINTR){
+		if(last_signal==SIGALRM) {
+			fprintf(stderr, "Timeout podczas odbierania wiadomosci\n");
+			return NULL;
+		}
+	}
+	cancel_alarm();
+	return in_msg;
 }
 
 void usage(char * name){
@@ -58,8 +79,11 @@ void register_vehicle(int sfd, struct sockaddr_in *addr) {
 	snprintf(fulladdress,25,"%s:%d",ipaddress,port);
 	send_datagram(sfd,addr,REGISTER_VEHICLE_REQUEST_MESSAGE,fulladdress);
 
-	in_msg = recv_datagram(sfd);
-	if (in_msg==NULL) return;
+	in_msg = timed_recv(sfd);
+	if (in_msg==NULL) {
+		 fprintf(stderr, "Brak odpowiedzi od serwera\n");
+		 return;
+	}
 	if (in_msg->type == REGISTER_VEHICLE_RESPONSE_MESSAGE) {
 		fprintf(stderr,"Zarejestrowano pojazd o id: %s\n",in_msg->text);
 	}
@@ -81,7 +105,10 @@ void unregister_vehicle(int sfd,struct sockaddr_in *addr) {
 	send_datagram(sfd,addr,UNREGISTER_VEHICLE_REQUEST_MESSAGE,unregister_message_text);
 
 	in_msg = recv_datagram(sfd);
-	if (in_msg==NULL) return;
+	if (in_msg==NULL) {
+		 fprintf(stderr, "Brak odpowiedzi od serwera\n");
+		 return;
+	}
 	if (in_msg->type == UNREGISTER_VEHICLE_RESPONSE_MESSAGE) {
 		fprintf(stderr,"Odpowiedz serwera: %s\n",in_msg->text);
 	}
@@ -104,15 +131,20 @@ void get_vehicle_history(int sfd,struct sockaddr_in *addr) {
 
 	do {
 		receiving_data = 0;
-		in_msg = recv_datagram(sfd);
-		if (in_msg==NULL) break;
+		in_msg = timed_recv(sfd);
+		if (in_msg==NULL) {
+			 fprintf(stderr, "Brak odpowiedzi od serwera\n");
+			 return;
+		}
 		if (in_msg->type == VEHICLE_HISTORY_RESPONSE_START_MESSAGE) {
 			fprintf(stderr,"Historia pojazdu: \n");
 			receiving_data = 1;
+			send_datagram(sfd,addr, VEHICLE_HISTORY_RESPONSE_DATA_MESSAGE, "Received");
 		}
 		else if (in_msg->type == VEHICLE_HISTORY_RESPONSE_DATA_MESSAGE) {
 			fprintf(stderr,"%s",in_msg->text);
 			receiving_data = 1;
+			send_datagram(sfd,addr, VEHICLE_HISTORY_RESPONSE_DATA_MESSAGE, "Received");
 		}
 		destroy_message(in_msg);
 	}
@@ -124,9 +156,28 @@ void request_longest_road_calculation(int sfd,struct sockaddr_in *addr) {
 
 	send_datagram(sfd,addr,CALCULATE_LONGEST_ROAD_REQUEST_MESSAGE,"Pliz calculate da shit!");
 
-	in_msg = recv_datagram(sfd);
-	if (in_msg==NULL) return;
-	if (in_msg->type == CALCULATE_LONGEST_ROAD_RESPONSE_MESSAGE) {
+	in_msg = timed_recv(sfd);
+	if (in_msg==NULL) {
+		 fprintf(stderr, "Brak odpowiedzi od serwera\n");
+		 return;
+	}
+	else if (in_msg->type == CALCULATE_LONGEST_ROAD_RESPONSE_MESSAGE) {
+		fprintf(stderr,"Odpowiedz serwera: %s\n",in_msg->text);
+	}
+	destroy_message(in_msg);
+}
+
+void request_calculations_status(int sfd,struct sockaddr_in *addr) {
+	struct message *in_msg;
+
+	send_datagram(sfd,addr,CALCULATIONS_STATUS_REQUEST,"Pliz calculate da shit!");
+
+	in_msg = timed_recv(sfd);
+	if (in_msg==NULL) {
+		 fprintf(stderr, "Brak odpowiedzi od serwera\n");
+		 return;
+	}
+	if (in_msg->type == CALCULATIONS_STATUS_RESPONSE) {
 		fprintf(stderr,"Odpowiedz serwera: %s\n",in_msg->text);
 	}
 	destroy_message(in_msg);
@@ -148,6 +199,9 @@ void work(int sfd, struct sockaddr_in *addr) {
 			case 4:
 				request_longest_road_calculation(sfd,addr);
 				break;
+			case 5:
+				request_calculations_status(sfd,addr);
+				break;
 		}
 	}
 }
@@ -163,7 +217,7 @@ int main(int argc, char** argv) {
 	struct sockaddr_in addr;
 	addr = make_address(argv[1],(short)atoi(argv[2]));
 
-	//if(sethandler(sig_alrm,SIGALRM)) ERR("Seting SIGALRM:");
+	if(sethandler(sig_alrm,SIGALRM)) ERR("Seting SIGALRM:");
 	work(sock, &addr);
 
 	if(TEMP_FAILURE_RETRY(close(sock))<0)ERR("close");

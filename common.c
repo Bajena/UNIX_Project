@@ -58,9 +58,12 @@ void cancel_alarm() {
 int send_datagram(int sock,struct sockaddr_in *addr, char type,char *text){
 	int status;
 	char msg[BUFFER_SIZE];
-      snprintf(msg,BUFFER_SIZE,"%c%s",type,text);
+      	snprintf(msg,BUFFER_SIZE,"%c%s",type,text);
 	status=TEMP_FAILURE_RETRY(sendto(sock,msg,strlen(msg),0,(struct sockaddr*)addr,sizeof(*addr)));
-	if(status<0&&errno!=EPIPE&&errno!=ECONNRESET) ERR("sendto");
+	if(status<0&&errno!=EPIPE&&errno!=ECONNRESET) {
+		//ERR("sendto");
+		fprintf(stderr, "Blad wysylania wiadomosci. Kod bledu: %d\n",errno);
+	}
 	return status;
 }
 
@@ -70,7 +73,9 @@ struct message* recv_datagram(int sock){
 	struct sockaddr_in addr;
 	socklen_t addrlen = sizeof(struct sockaddr_in);
 	if((len = recvfrom(sock,buf,BUFFER_SIZE,0,(struct sockaddr*) &addr,&addrlen))<0) {
-		if(EINTR!=errno)ERR("recvfrom"); }
+		if(EINTR!=errno)ERR("recvfrom");
+		else return NULL;
+	}
 	buf[len] = '\0';
 	return  create_message(buf[0], buf+1, &addr);
 }

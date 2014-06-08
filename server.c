@@ -31,31 +31,35 @@ typedef struct vehicle {
 	int id;
 	int log_fd;
 	struct sockaddr_in addr;
-	pthread_mutex_t log_mutex;
+	int unanswered_position_requests;
+	pthread_mutex_t* log_mutex;
 } vehicle;
 
 typedef struct calculations_status {
 	vehicle* curr_vehicle;
 
+	int max_vehicle_id;
 	int in_progess;
-	double result;
+	double max_distance;
 } calculations_status;
 
 volatile sig_atomic_t last_signal=0;
-
 static pthread_mutex_t vehicles_mutex =  PTHREAD_MUTEX_INITIALIZER;
+calculations_status* active_calculation;
 
 vector registered_vehicles;
 
 void cleanup() {
 	int vehicles_count = vector_length(&registered_vehicles);
 	vehicle current_vehicle;
+	if (active_calculation!=NULL) free(active_calculation);
 	int i = 0;
 	for (;i<vehicles_count;i++){
 		vector_get(&registered_vehicles,i,&current_vehicle);
 		fprintf(stderr, "Zamykam plik: %d\n", current_vehicle.log_fd);
 		if(TEMP_FAILURE_RETRY(close(current_vehicle.log_fd))<0)ERR("close");
-		if(TEMP_FAILURE_RETRY(pthread_mutex_destroy(&current_vehicle.log_mutex))<0)ERR("close");
+		if(TEMP_FAILURE_RETRY(pthread_mutex_destroy(current_vehicle.log_mutex))<0)ERR("close");
+		free(current_vehicle.log_mutex);
 	}
 
 	vector_dispose(&registered_vehicles);
@@ -134,6 +138,12 @@ struct sockaddr_in make_address2(char *fulladdress){
 	return make_address(ipaddress,port);
 }
 
+// Sprawdza czy mozna wysylac wiadomosci na podany przez kleinta aders
+int check_vehicle_valid(int sfd, vehicle* current_vehicle) {
+	if (send_datagram(sfd, &current_vehicle->addr, CHECK_REQUEST, "test") < 0 && errno==22) return 0;
+	return 1;
+}
+
 void register_new_vehicle(int sfd, struct sockaddr_in* client_addr, char* vehicle_address) {
 
 	int vehicles_count = vector_length(&registered_vehicles);
@@ -148,6 +158,10 @@ void register_new_vehicle(int sfd, struct sockaddr_in* client_addr, char* vehicl
 	vehicle new_vehicle;
 	new_vehicle.addr = make_address2(vehicle_address);
 	new_vehicle.id = assigned_id;
+	new_vehicle.unanswered_position_requests = 0;
+
+	// Sprawdz polaczenie
+
 
 	//Plik logu
 	char logname[20];
@@ -157,8 +171,8 @@ void register_new_vehicle(int sfd, struct sockaddr_in* client_addr, char* vehicl
 	if ((fd = open (logname, O_RDWR | O_CREAT | O_TRUNC | O_APPEND, S_IRWXU | S_IRWXG | S_IRWXO) )< 0)ERR("Create file");
 	new_vehicle.log_fd = fd;
 
-
-	pthread_mutex_init(&new_vehicle.log_mutex, NULL);
+	new_vehicle.log_mutex = (pthread_mutex_t*) mymalloc(sizeof(pthread_mutex_t));
+	pthread_mutex_init(new_vehicle.log_mutex, NULL);
 
 	vector_push(&registered_vehicles,&new_vehicle);
 
@@ -212,6 +226,21 @@ void unregister_vehicle(int sfd, struct message *in_msg) {
 	}
 }
 
+void remove_vehicle(vehicle current_vehicle) {
+	if(TEMP_FAILURE_RETRY(close(current_vehicle.log_fd))<0)ERR("close");
+	if(TEMP_FAILURE_RETRY(pthread_mutex_destroy(current_vehicle.log_mutex))<0)ERR("close");
+	free(current_vehicle.log_mutex);
+
+	int index = get_vehicle_by_id(current_vehicle.id);
+	vector_remove(&registered_vehicles, index);
+}
+
+void update_vehicle(int id, vehicle *new_vehicle) {
+	int index = get_vehicle_by_id(new_vehicle->id);
+	vector_remove(&registered_vehicles, index);
+	vector_insert_at(&registered_vehicles, new_vehicle, index);
+}
+
 void *request_vehicles_positions(void *sfd_void) {
 	int sfd = *((int*)sfd_void);
 	vehicle current_vehicle;
@@ -223,7 +252,14 @@ void *request_vehicles_positions(void *sfd_void) {
 		vehicles_count = vector_length(&registered_vehicles);
 		for (i= 0;i<vehicles_count;i++) {
 			vector_get(&registered_vehicles,i,&current_vehicle);
-			send_datagram(sfd, &current_vehicle.addr, POSITION_REQUEST_MESSAGE, " ");
+			current_vehicle.unanswered_position_requests++;
+			update_vehicle(current_vehicle.id, &current_vehicle);
+			if (current_vehicle.unanswered_position_requests==MAX_ATTEMPTS) {
+				fprintf(stderr,"Brak odpowiedzi od pojazdu %d - usuwam\n",current_vehicle.id);
+				remove_vehicle(current_vehicle);
+			}
+			else
+				send_datagram(sfd, &current_vehicle.addr, POSITION_REQUEST_MESSAGE, " ");
 		}
 
 		if (pthread_mutex_unlock(&vehicles_mutex)!=0) ERR("mutex_unlock");
@@ -239,14 +275,16 @@ void process_vehicle_position(struct message *in_msg) {
 	vector_get(&registered_vehicles,vehicle_index,&current_vehicle);
 
 	fprintf(stderr,"[%d] Pozycja: %s\n",current_vehicle.id, in_msg->text);
+	current_vehicle.unanswered_position_requests = 0;
 
+	update_vehicle(current_vehicle.id, &current_vehicle);
 	char buffer[20];
 	snprintf(buffer,20,"%s\n",in_msg->text);
 
 
-	if (pthread_mutex_lock(&current_vehicle.log_mutex)!=0) ERR("mutex_lock");
+	if (pthread_mutex_lock(current_vehicle.log_mutex)!=0) ERR("mutex_lock");
 	bulk_write(current_vehicle.log_fd, buffer, strlen(buffer));
-	if (pthread_mutex_unlock(&current_vehicle.log_mutex)!=0) ERR("mutex_unlock");
+	if (pthread_mutex_unlock(current_vehicle.log_mutex)!=0) ERR("mutex_unlock");
 }
 
 void send_vehicle_history(int sfd, struct message *in_msg) {
@@ -263,20 +301,28 @@ void send_vehicle_history(int sfd, struct message *in_msg) {
 
 	char buffer[FILE_SEGMENT_SIZE];
 	send_datagram(sfd, in_msg->addr, VEHICLE_HISTORY_RESPONSE_START_MESSAGE, "Reading");
-	if (pthread_mutex_lock(&current_vehicle.log_mutex)!=0) ERR("mutex_lock");
+	if (pthread_mutex_lock(current_vehicle.log_mutex)!=0) ERR("mutex_lock");
 	fprintf(stderr,"Pobieram historie pojazdu %d (fd=%d)...\n",current_vehicle.id, current_vehicle.log_fd);
 	if (lseek(current_vehicle.log_fd, 0,SEEK_SET) < 0)ERR("lseek");
 	int read_chars = 0;
+
 	while ((read_chars = bulk_read(current_vehicle.log_fd, buffer, FILE_SEGMENT_SIZE)) > 0){
 		buffer[read_chars] = '\0';
 		fprintf(stderr,"%s",buffer);
-		send_datagram(sfd, in_msg->addr, VEHICLE_HISTORY_RESPONSE_DATA_MESSAGE, buffer);
+		if (send_and_confirm(sfd, in_msg->addr, VEHICLE_HISTORY_RESPONSE_DATA_MESSAGE, buffer)==-1) {
+			fprintf(stderr, "Blad podczas wysylania historii pojazdu - brak odpowiedzi ze strony klienta\n");
+			if (lseek(current_vehicle.log_fd, SEEK_END,SEEK_SET) < 0)ERR("lseek");
+			if (pthread_mutex_unlock(current_vehicle.log_mutex)!=0) ERR("mutex_unlock");
+			return;
+		}
+
+		//send_datagram(sfd, in_msg->addr, VEHICLE_HISTORY_RESPONSE_DATA_MESSAGE, buffer);
 	}
 	if (lseek(current_vehicle.log_fd, SEEK_END,SEEK_SET) < 0)ERR("lseek");
 
 	send_datagram(sfd, in_msg->addr, VEHICLE_HISTORY_RESPONSE_END_MESSAGE, "Done");
 	fprintf(stderr,"\nWysylanie zakonczone\n");
-	if (pthread_mutex_unlock(&current_vehicle.log_mutex)!=0) ERR("mutex_unlock");
+	if (pthread_mutex_unlock(current_vehicle.log_mutex)!=0) ERR("mutex_unlock");
 }
 
 Position string_to_point(char* line){
@@ -307,10 +353,10 @@ Position string_to_point(char* line){
 	return pos;
 }
 
-void calculate_vehicle_road(calculations_status* status){
-	vehicle* vehicle = status->curr_vehicle;
+double calculate_vehicle_road(vehicle *current_vehicle){
+	vehicle* vehicle = current_vehicle;
 
-	if (pthread_mutex_lock(&vehicle->log_mutex)!=0) ERR("mutex_lock");
+	if (pthread_mutex_lock(vehicle->log_mutex)!=0) ERR("mutex_lock");
 	char buffer[LINE_BUFFER_SIZE];
 	int read_chars = 0;
 	Position last_pos, curr_pos;
@@ -337,16 +383,15 @@ void calculate_vehicle_road(calculations_status* status){
 	}
 	if (lseek(vehicle->log_fd, SEEK_END,SEEK_SET) < 0)ERR("lseek");
 
-	if (pthread_mutex_unlock(&vehicle->log_mutex)!=0) ERR("mutex_unlock");
+	if (pthread_mutex_unlock(vehicle->log_mutex)!=0) ERR("mutex_unlock");
+
+	return distance;
 }
 
-void begin_longest_road_calculations(int sfd, struct message *in_msg) {
-	send_datagram(sfd, in_msg->addr, CALCULATE_LONGEST_ROAD_RESPONSE_MESSAGE, "Rozpoczeto obliczenia...");
-	fprintf(stderr,"Ropoczeto obliczenia najdluzszej drogi...\n");
-
- 	calculations_status status;
- 	status.in_progess = 1;
-
+void *perform_longest_road_calculations(void *param) {
+	if (active_calculation!=NULL) free(active_calculation);
+	active_calculation = (calculations_status*) mymalloc(sizeof(calculations_status));
+ 	active_calculation->in_progess = 1;
 	vector vehicles_clone;
 	vector_init(&vehicles_clone,sizeof(vehicle),0,NULL);
 
@@ -359,10 +404,52 @@ void begin_longest_road_calculations(int sfd, struct message *in_msg) {
 	int vehicles_count = vector_length(&vehicles_clone);
 	for (i= 0;i<vehicles_count;i++) {
 		vector_get(&vehicles_clone,i,&current_vehicle);
-		status.curr_vehicle = &current_vehicle;
-		calculate_vehicle_road(&status);
+		active_calculation->curr_vehicle = &current_vehicle;
+		double vehicle_distance = calculate_vehicle_road(&current_vehicle);
+		if (vehicle_distance > active_calculation->max_distance) {
+			active_calculation->max_vehicle_id = current_vehicle.id;
+			active_calculation->max_distance = vehicle_distance;
+		}
 	}
+
+	active_calculation->in_progess = 0;
+	fprintf(stderr,"Najwieksza trase: %.2f pokonal pojazd o id: %d\n",active_calculation->max_distance, active_calculation->max_vehicle_id);
+	return NULL;
 }
+
+void begin_longest_road_calculations(int sfd, struct message *in_msg) {
+	if (active_calculation!=NULL && active_calculation->in_progess) {
+		send_datagram(sfd, in_msg->addr, CALCULATE_LONGEST_ROAD_RESPONSE_MESSAGE, "Nie mozna rozpoczac liczenia - trwa inne obliczenie!");
+		return;
+	}
+
+	if (vector_length(&registered_vehicles)==0) {
+		send_datagram(sfd, in_msg->addr, CALCULATE_LONGEST_ROAD_RESPONSE_MESSAGE, "Nie mozna rozpoczac liczenia - nie zarejestrowano zadnych pojazdow!");
+		return;
+	}
+
+	pthread_t calculations_thread;
+ 	if (pthread_create(&calculations_thread, NULL, perform_longest_road_calculations, NULL)!=0)ERR("create_thread");
+	send_datagram(sfd, in_msg->addr, CALCULATE_LONGEST_ROAD_RESPONSE_MESSAGE, "Rozpoczeto obliczenia...");
+	fprintf(stderr,"Ropoczeto obliczenia najdluzszej drogi...\n");
+}
+
+void send_calculations_status(int sfd, struct message *in_msg) {
+	char response_message[BUFFER_SIZE];
+	if (active_calculation==NULL) {
+		snprintf(response_message, BUFFER_SIZE, "Aktualnie nie trwa zadne obliczenie!");
+	}
+	else if (active_calculation->in_progess==1) {
+		snprintf(response_message, BUFFER_SIZE, "Obliczenia w toku...");
+	}
+	else if (active_calculation->in_progess == 0) {
+		snprintf(response_message, BUFFER_SIZE, "Obliczenia zakonczone.\nNajdluzsza trasa: %.2f\nPojazd: %d", active_calculation->max_distance, active_calculation->max_vehicle_id);
+	}
+
+	send_datagram(sfd, in_msg->addr, CALCULATIONS_STATUS_RESPONSE, response_message);
+	fprintf(stderr,"Wyslano status obliczen\n");
+}
+
 
 void work(int sfd) {
 	struct message *in_msg;
@@ -394,6 +481,9 @@ void work(int sfd) {
 		}
 		else if (in_msg->type==CALCULATE_LONGEST_ROAD_REQUEST_MESSAGE) {
 			begin_longest_road_calculations(sfd,in_msg);
+		}
+		else if (in_msg->type==CALCULATIONS_STATUS_REQUEST) {
+			send_calculations_status(sfd,in_msg);
 		}
 		destroy_message(in_msg);
 	}
