@@ -122,12 +122,12 @@ ssize_t bulk_read(int fd, char *buf, size_t count)
 
 ssize_t bulk_read_line(int fd, char *buf, size_t count)
 {
+	char* buf_tmp = buf;
 	int c;
 	size_t len = 0;
-
 	do
 	{
-		c = TEMP_FAILURE_RETRY(read(fd, buf, count));
+		c = TEMP_FAILURE_RETRY(read(fd, buf, 1));
 		if (c < 0)
 			return c;
 		if (c == 0)
@@ -135,8 +135,9 @@ ssize_t bulk_read_line(int fd, char *buf, size_t count)
 		buf += c;
 		len += c;
 		count -= c;
-		if (buf[len-1]=='\n')
-			return len;
+
+		if (buf_tmp[len-1]=='\n')
+			break;
 	}
 	while (count > 0);
 

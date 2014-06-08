@@ -16,13 +16,14 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <math.h>
 
 #include "common.h"
 #include "vector.h"
 
 #define POSITION_REFRESH_TIME 1500000000
 #define FILE_SEGMENT_SIZE BUFFER_SIZE/2
-#define LINE_BUFFER_SIZE 25
+#define LINE_BUFFER_SIZE 100
 #define LOGS_DIRECTORY "logs"
 #define LOG_FILE_PREFIX "log_"
 
@@ -34,6 +35,8 @@ typedef struct vehicle {
 } vehicle;
 
 typedef struct calculations_status {
+	vehicle* curr_vehicle;
+
 	int in_progess;
 	double result;
 } calculations_status;
@@ -270,29 +273,79 @@ void send_vehicle_history(int sfd, struct message *in_msg) {
 		send_datagram(sfd, in_msg->addr, VEHICLE_HISTORY_RESPONSE_DATA_MESSAGE, buffer);
 	}
 	if (lseek(current_vehicle.log_fd, SEEK_END,SEEK_SET) < 0)ERR("lseek");
+
 	send_datagram(sfd, in_msg->addr, VEHICLE_HISTORY_RESPONSE_END_MESSAGE, "Done");
 	fprintf(stderr,"\nWysylanie zakonczone\n");
 	if (pthread_mutex_unlock(&current_vehicle.log_mutex)!=0) ERR("mutex_unlock");
 }
 
-void calculate_vehicle_road(vehicle vehicle){
-	if (pthread_mutex_lock(&vehicle.log_mutex)!=0) ERR("mutex_lock");
+Position string_to_point(char* line){
+	Position pos;
+	int i;
+	int num_index = 0;
+
+	char num_buffer[10];
+	for (i = 0;i<strlen(line);i++){
+		if (line[i]=='('){
+		}
+		else if (line[i]==',') {
+			num_buffer[num_index] = '\0';
+			pos.x = atoi(num_buffer);
+			fprintf(stderr, "X = %s\n",num_buffer);
+			num_buffer[0] = '\0';
+			num_index = 0;
+		}
+		else if (line[i]==')') {
+			num_buffer[num_index] = '\0';
+			pos.y = atoi(num_buffer);
+			fprintf(stderr, "Y = %s\n",num_buffer);
+			break;
+		}
+		else num_buffer[num_index++] = line[i];
+	}
+
+	return pos;
+}
+
+void calculate_vehicle_road(calculations_status* status){
+	vehicle* vehicle = status->curr_vehicle;
+
+	if (pthread_mutex_lock(&vehicle->log_mutex)!=0) ERR("mutex_lock");
 	char buffer[LINE_BUFFER_SIZE];
 	int read_chars = 0;
-	fprintf(stderr,"Pojazd: %d\n",vehicle.id);
-	if (lseek(vehicle.log_fd, 0,SEEK_SET) < 0)ERR("lseek");
-	while ((read_chars = bulk_read_line(vehicle.log_fd,buffer,LINE_BUFFER_SIZE)) > 0) {
+	Position last_pos, curr_pos;
+	last_pos.x = -1;
+	last_pos.y = -1;
+	fprintf(stderr,"Pojazd: %d\n",vehicle->id);
+	double distance = 0.0;
+
+	if (lseek(vehicle->log_fd, 0,SEEK_SET) < 0)ERR("lseek");
+	while ((read_chars = bulk_read_line(vehicle->log_fd,buffer,LINE_BUFFER_SIZE)) > 0) {
 		buffer[read_chars] = '\0';
-		fprintf(stderr, "Line: %s\n",buffer);
+		if (last_pos.x==-1 && last_pos.y==-1){
+			curr_pos = string_to_point(buffer);
+			last_pos = curr_pos;
+		}
+		else {
+			last_pos = curr_pos;
+			curr_pos = string_to_point(buffer);
+		}
+		double last_distance = sqrt(pow(curr_pos.x-last_pos.x,2) + pow(curr_pos.y - last_pos.y,2));
+		distance+=last_distance;
+		fprintf(stderr,"Pozycja: (%d,%d)\nOdcinek: %.2f\nLaczny dystans: %.2f\n",curr_pos.x,curr_pos.y, last_distance, distance);
+
 	}
-	if (lseek(vehicle.log_fd, SEEK_END,SEEK_SET) < 0)ERR("lseek");
-	if (pthread_mutex_unlock(&vehicle.log_mutex)!=0) ERR("mutex_unlock");
+	if (lseek(vehicle->log_fd, SEEK_END,SEEK_SET) < 0)ERR("lseek");
+
+	if (pthread_mutex_unlock(&vehicle->log_mutex)!=0) ERR("mutex_unlock");
 }
 
 void begin_longest_road_calculations(int sfd, struct message *in_msg) {
 	send_datagram(sfd, in_msg->addr, CALCULATE_LONGEST_ROAD_RESPONSE_MESSAGE, "Rozpoczeto obliczenia...");
 	fprintf(stderr,"Ropoczeto obliczenia najdluzszej drogi...\n");
 
+ 	calculations_status status;
+ 	status.in_progess = 1;
 
 	vector vehicles_clone;
 	vector_init(&vehicles_clone,sizeof(vehicle),0,NULL);
@@ -306,7 +359,8 @@ void begin_longest_road_calculations(int sfd, struct message *in_msg) {
 	int vehicles_count = vector_length(&vehicles_clone);
 	for (i= 0;i<vehicles_count;i++) {
 		vector_get(&vehicles_clone,i,&current_vehicle);
-		calculate_vehicle_road(current_vehicle);
+		status.curr_vehicle = &current_vehicle;
+		calculate_vehicle_road(&status);
 	}
 }
 
