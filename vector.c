@@ -105,12 +105,7 @@ extern void vector_unshift(vector *v, void *elem)
 	v->num_elems++;
 }
 
-extern void vector_transpose(vector *v, size_t index1, size_t index2)
-{
-	vector_swap(VECTOR_INDEX(index1), VECTOR_INDEX(index2), v->elem_size);
-}
-
-static void vector_grow(vector *v, size_t size)
+extern void vector_grow(vector *v, size_t size)
 {
 	if (size > v->num_alloc_elems)
 		v->num_alloc_elems = size;
@@ -162,32 +157,4 @@ extern size_t vector_length(vector *v)
 extern size_t vector_size(vector *v)
 {
 	return v->num_elems * v->elem_size;
-}
-
-extern void vector_cmp_all(vector *v, void *elem, int (*cmp_func)(const void *, const void *))
-{
-	size_t i;
-	void *best_match = VECTOR_INDEX(0);
-
-	for (i = 1; i < v->num_elems; i++)
-		if (cmp_func(VECTOR_INDEX(i), best_match) > 0)
-			best_match = VECTOR_INDEX(i);
-
-	memcpy(elem, best_match, v->elem_size);
-}
-
-extern void vector_qsort(vector *v, int (*cmp_func)(const void *, const void *))
-{
-	qsort(v->elems, v->num_elems, v->elem_size, cmp_func);
-}
-
-static void vector_swap(void *elemp1, void *elemp2, size_t elem_size)
-{
-	void *tmp = malloc(elem_size);
-
-	memcpy(tmp, elemp1, elem_size);
-	memcpy(elemp1, elemp2, elem_size);
-	memcpy(elemp2, tmp, elem_size);
-
-             free(tmp); /* Thanks to gromit */
 }

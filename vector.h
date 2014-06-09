@@ -35,13 +35,9 @@ extern void vector_shift(vector *, void *);
 extern void vector_unshift(vector *, void *);
 extern void vector_get(vector *, size_t, void *);
 extern void vector_remove(vector *, size_t);
-extern void vector_transpose(vector *, size_t, size_t);
 extern size_t vector_length(vector *);
 extern size_t vector_size(vector *);
 extern void vector_get_all(vector *, void *);
-extern void vector_cmp_all(vector *, void *, int (*cmp_func)(const void *, const void *));
-extern void vector_qsort(vector *, int (*cmp_func)(const void *, const void *));
-static void vector_grow(vector *, size_t);
-static void vector_swap(void *, void *, size_t);
+extern void vector_grow(vector *, size_t);
 
 #endif

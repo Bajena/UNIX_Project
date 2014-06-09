@@ -21,7 +21,7 @@
 #include "common.h"
 #include "vector.h"
 
-#define POSITION_REFRESH_TIME 1500000000
+#define POSITION_REFRESH_TIME 150000000
 #define FILE_SEGMENT_SIZE BUFFER_SIZE/2
 #define LINE_BUFFER_SIZE 100
 #define LOGS_DIRECTORY "logs"
@@ -119,7 +119,10 @@ struct sockaddr_in make_address(char *address, int port){
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons (port);
 	hostinfo = gethostbyname(address);
-	if(hostinfo == NULL)ERR("gethost:");
+	if(hostinfo == NULL){
+		fprintf(stderr,"Nieprawidlowy adres ip: %s - przydzielam domyslny\n",address);
+		hostinfo = gethostbyname("127.0.0.1");
+	}//ERR("gethost:");
 	addr.sin_addr = *(struct in_addr*) hostinfo->h_addr;
 	return addr;
 }
@@ -134,6 +137,7 @@ struct sockaddr_in make_address2(char *fulladdress){
 			port = atoi(fulladdress + i + 1);
 		}
 	}
+
 	fprintf(stderr, "FullAdrres: %s\nIP: %s\nPort: %d\n", fulladdress,ipaddress,port);
 	return make_address(ipaddress,port);
 }
@@ -160,8 +164,11 @@ void register_new_vehicle(int sfd, struct sockaddr_in* client_addr, char* vehicl
 	new_vehicle.id = assigned_id;
 	new_vehicle.unanswered_position_requests = 0;
 
-	// Sprawdz polaczenie
-
+	if (check_vehicle_valid(sfd, &new_vehicle)==0) {
+		fprintf(stderr, "Podano nieprawidłowy adres pojazdu!\n");
+		send_datagram(sfd, client_addr, REGISTER_VEHICLE_RESPONSE_MESSAGE, "Nieprawidly adres pojazdu!");
+		return;
+	}
 
 	//Plik logu
 	char logname[20];
@@ -281,7 +288,6 @@ void process_vehicle_position(struct message *in_msg) {
 	char buffer[20];
 	snprintf(buffer,20,"%s\n",in_msg->text);
 
-
 	if (pthread_mutex_lock(current_vehicle.log_mutex)!=0) ERR("mutex_lock");
 	bulk_write(current_vehicle.log_fd, buffer, strlen(buffer));
 	if (pthread_mutex_unlock(current_vehicle.log_mutex)!=0) ERR("mutex_unlock");
@@ -320,7 +326,7 @@ void send_vehicle_history(int sfd, struct message *in_msg) {
 	}
 	if (lseek(current_vehicle.log_fd, SEEK_END,SEEK_SET) < 0)ERR("lseek");
 
-	send_datagram(sfd, in_msg->addr, VEHICLE_HISTORY_RESPONSE_END_MESSAGE, "Done");
+	send_datagram(sfd, in_msg->addr, VEHICLE_HISTORY_RESPONSE_END_MESSAGE, "Zakonczono przesylanie");
 	fprintf(stderr,"\nWysylanie zakonczone\n");
 	if (pthread_mutex_unlock(current_vehicle.log_mutex)!=0) ERR("mutex_unlock");
 }
@@ -413,6 +419,7 @@ void *perform_longest_road_calculations(void *param) {
 	}
 
 	active_calculation->in_progess = 0;
+	vector_dispose(&vehicles_clone);
 	fprintf(stderr,"Najwieksza trase: %.2f pokonal pojazd o id: %d\n",active_calculation->max_distance, active_calculation->max_vehicle_id);
 	return NULL;
 }
@@ -495,6 +502,7 @@ void work(int sfd) {
 	vector_dispose(&registered_vehicles);
 }
 
+
 int main(int argc, char** argv) {
 	int sfd ;
 
@@ -513,7 +521,6 @@ int main(int argc, char** argv) {
 		if (mkdir_result!=-1)
 			fprintf(stderr, "Error:%d",mkdir_result);
 	}
-	//work(sock, task_length,points_to_win);
 
 	work(sfd);
 

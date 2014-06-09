@@ -22,6 +22,18 @@ void sig_alrm(int i) {
 	last_signal=i;
 }
 
+int read_int(){
+	char line[256];
+	int i;
+	if (fgets(line, sizeof(line), stdin)) {
+	    if (1 == sscanf(line, "%d", &i)) {
+	        return i;
+	    }
+	}
+
+	return -1;
+}
+
 struct sockaddr_in make_address(char *address, int port){
 	struct sockaddr_in addr;
 	struct hostent *hostinfo;
@@ -57,11 +69,20 @@ int choose_option() {
 		fprintf(stderr, "WYBIERZ FUNKCJE:\n1 - Zarejestruj pojazd\n2 - Wyrejestruj pojazd\n3 - Pobierz historie pojazdu\n4 - Oblicz ktory pojazd przejechal najdluzsza trase\n5 - Sprawdz status obliczen\n");
 		fprintf(stderr,"Twoj wybor: ");
 
-  		scanf ("%d",&selected_option);
+  		selected_option = read_int();
 	}
 	while (selected_option <= 0 && selected_option >= 6) ;
 
 	return selected_option;
+}
+
+int check_ip_valid(char *ipstring) {
+	int i;
+	for (i = 0;i<strlen(ipstring);i++) {
+		if (!(ipstring[i]=='.' || ((int)ipstring[i] >= 48 && (int)ipstring[i] <= 57)))
+			return 0;
+	}
+	return 1;
 }
 
 void register_vehicle(int sfd, struct sockaddr_in *addr) {
@@ -73,8 +94,15 @@ void register_vehicle(int sfd, struct sockaddr_in *addr) {
 
 	fprintf(stderr,"Podaj ip pojazdu: ");
   	scanf ("%s",ipaddress);
+  	if (!check_ip_valid(ipaddress)) {
+  		fprintf(stderr, "Podano nieprawidlowy adres ip!\n");
+  		return;
+  	}
 	fprintf(stderr,"Podaj port pojazdu: ");
-  	scanf ("%d",&port);
+  	if ((port = read_int())==-1){
+  		fprintf(stderr, "Podano nieprawidlowy port!\n");
+  		return;
+  	}
 
 	snprintf(fulladdress,25,"%s:%d",ipaddress,port);
 	send_datagram(sfd,addr,REGISTER_VEHICLE_REQUEST_MESSAGE,fulladdress);
@@ -98,8 +126,11 @@ void unregister_vehicle(int sfd,struct sockaddr_in *addr) {
 	struct message *in_msg;
 
 	fprintf(stderr,"Podaj ID pojazdu: ");
-  	scanf ("%d",&vehicle_id);
 
+	if ((vehicle_id = read_int())==-1){
+  		fprintf(stderr, "Podano nieprawidlowe ID pojazdu!\n");
+  		return;
+  	}
 	snprintf(unregister_message_text,4,"%d",vehicle_id);
 
 	send_datagram(sfd,addr,UNREGISTER_VEHICLE_REQUEST_MESSAGE,unregister_message_text);
@@ -123,7 +154,10 @@ void get_vehicle_history(int sfd,struct sockaddr_in *addr) {
 	struct message *in_msg;
 
 	fprintf(stderr,"Podaj ID pojazdu: ");
-  	scanf ("%d",&vehicle_id);
+	if ((vehicle_id = read_int())==-1){
+  		fprintf(stderr, "Podano nieprawidlowe ID pojazdu!\n");
+  		return;
+  	}
 	snprintf(message_text,4,"%d",vehicle_id);
 
 	send_datagram(sfd,addr,VEHICLE_HISTORY_REQUEST_MESSAGE,message_text);

@@ -20,8 +20,8 @@
 #define MAX_X_GPS 9000
 #define MIN_Y_GPS -18000
 #define MAX_Y_GPS 18000
-#define MAX_MOVE_GPS 100
-#define POSITION_CHANGE_TIME 1000000000
+#define MAX_MOVE_GPS 10
+#define POSITION_CHANGE_TIME 100000000
 
 volatile sig_atomic_t last_signal=0;
 
