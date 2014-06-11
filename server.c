@@ -303,6 +303,7 @@ void send_vehicle_history(int sfd, struct message *in_msg) {
 		return;
 	}
 
+
 	vector_get(&registered_vehicles,vehicle_index,&current_vehicle);
 
 	char buffer[FILE_SEGMENT_SIZE];
@@ -437,6 +438,7 @@ void begin_longest_road_calculations(int sfd, struct message *in_msg) {
 
 	pthread_t calculations_thread;
  	if (pthread_create(&calculations_thread, NULL, perform_longest_road_calculations, NULL)!=0)ERR("create_thread");
+	if (pthread_detach(calculations_thread)!=0) ERR("detach");
 	send_datagram(sfd, in_msg->addr, CALCULATE_LONGEST_ROAD_RESPONSE_MESSAGE, "Rozpoczeto obliczenia...");
 	fprintf(stderr,"Ropoczeto obliczenia najdluzszej drogi...\n");
 }

@@ -34,6 +34,15 @@ int read_int(){
 	return -1;
 }
 
+char* read_line(char* buffer) {
+	char line[256];
+	if ((buffer = fgets(buffer, sizeof(line), stdin))!=NULL) {
+	    buffer[strlen(buffer)-1] = '\0';
+	    return buffer;
+	}
+	return "";
+}
+
 struct sockaddr_in make_address(char *address, int port){
 	struct sockaddr_in addr;
 	struct hostent *hostinfo;
@@ -69,7 +78,7 @@ int choose_option() {
 		fprintf(stderr, "WYBIERZ FUNKCJE:\n1 - Zarejestruj pojazd\n2 - Wyrejestruj pojazd\n3 - Pobierz historie pojazdu\n4 - Oblicz ktory pojazd przejechal najdluzsza trase\n5 - Sprawdz status obliczen\n");
 		fprintf(stderr,"Twoj wybor: ");
 
-  		selected_option = read_int();
+  		if ( (selected_option = read_int())==-1) fprintf(stderr, "Nieprawidlowy wybor");
 	}
 	while (selected_option <= 0 && selected_option >= 6) ;
 
@@ -78,10 +87,19 @@ int choose_option() {
 
 int check_ip_valid(char *ipstring) {
 	int i;
+	if (strlen(ipstring)==0)
+		return 0;
+	int dots = 0;
+
 	for (i = 0;i<strlen(ipstring);i++) {
 		if (!(ipstring[i]=='.' || ((int)ipstring[i] >= 48 && (int)ipstring[i] <= 57)))
 			return 0;
+		if (ipstring[i]=='.')
+			dots++;
 	}
+
+	if (dots<3) return 0;
+
 	return 1;
 }
 
@@ -93,8 +111,9 @@ void register_vehicle(int sfd, struct sockaddr_in *addr) {
 	int port;
 
 	fprintf(stderr,"Podaj ip pojazdu: ");
-  	scanf ("%s",ipaddress);
-  	if (!check_ip_valid(ipaddress)) {
+	read_line(ipaddress);
+  	//scanf ("%s",ipaddress);
+  	if (check_ip_valid(ipaddress)==0) {
   		fprintf(stderr, "Podano nieprawidlowy adres ip!\n");
   		return;
   	}
@@ -180,6 +199,9 @@ void get_vehicle_history(int sfd,struct sockaddr_in *addr) {
 			receiving_data = 1;
 			send_datagram(sfd,addr, VEHICLE_HISTORY_RESPONSE_DATA_MESSAGE, "Received");
 		}
+		else if (in_msg->type == VEHICLE_HISTORY_RESPONSE_END_MESSAGE) {
+			fprintf(stderr,"Odpowiedz serwera: %s\n",in_msg->text);
+		}
 		destroy_message(in_msg);
 	}
 	while (receiving_data==1);
@@ -188,9 +210,9 @@ void get_vehicle_history(int sfd,struct sockaddr_in *addr) {
 void request_longest_road_calculation(int sfd,struct sockaddr_in *addr) {
 	struct message *in_msg;
 
-	send_datagram(sfd,addr,CALCULATE_LONGEST_ROAD_REQUEST_MESSAGE,"Pliz calculate da shit!");
+	send_datagram(sfd,addr,CALCULATE_LONGEST_ROAD_REQUEST_MESSAGE," ");
 
-	in_msg = timed_recv(sfd);
+	in_msg = recv_datagram(sfd);
 	if (in_msg==NULL) {
 		 fprintf(stderr, "Brak odpowiedzi od serwera\n");
 		 return;
@@ -204,7 +226,7 @@ void request_longest_road_calculation(int sfd,struct sockaddr_in *addr) {
 void request_calculations_status(int sfd,struct sockaddr_in *addr) {
 	struct message *in_msg;
 
-	send_datagram(sfd,addr,CALCULATIONS_STATUS_REQUEST,"Pliz calculate da shit!");
+	send_datagram(sfd,addr,CALCULATIONS_STATUS_REQUEST," ");
 
 	in_msg = timed_recv(sfd);
 	if (in_msg==NULL) {
